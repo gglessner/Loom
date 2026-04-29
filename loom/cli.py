@@ -92,10 +92,17 @@ class LoomCLI:
         self._registry = ToolRegistry()
         self._registry.register_many(builtin_tools())
         cwd = Path.cwd()
+        # Skill search order (later wins on filename collision):
+        #   1. ~/.loom/skills/        - user-global library
+        #   2. ./skills/              - project-shared, visible (check this in!)
+        #   3. ./.loom/skills/        - project-private, hidden (overrides shared)
+        #   4. ./<cfg.skills_dir>/    - explicit override; default equals #3 so
+        #                               it deduplicates harmlessly.
         skill_dirs = [
-            USER_HOME / "skills",          # ~/.loom/skills
-            cwd / ".loom" / "skills",      # ./.loom/skills
-            cwd / cfg.skills_dir,          # configurable, default ./.loom/skills
+            USER_HOME / "skills",
+            cwd / "skills",
+            cwd / ".loom" / "skills",
+            cwd / cfg.skills_dir,
         ]
         self._skills = SkillManager(skill_dirs)
         self._mcp = MCPRuntime(cfg.mcp_servers)

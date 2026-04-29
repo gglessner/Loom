@@ -43,8 +43,12 @@ def test_explicit_on_emits_escape_codes() -> None:
     assert "hi" in s
 
 
-def test_dark_theme_uses_claude_brand_orange() -> None:
-    """The dark-theme brand color must be Claude's rgb(215,119,87)."""
+def test_dark_theme_uses_claude_brand_orange(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The dark-theme brand color must be Claude's rgb(215,119,87) when the
+    terminal supports 24-bit. (Apple Terminal gets the 256-color fallback,
+    covered by separate tests below.)"""
+    monkeypatch.setenv("COLORTERM", "truecolor")
+    monkeypatch.delenv("TERM_PROGRAM", raising=False)
     c = Colors()
     c.configure("dark")
     assert c.theme_name == "dark"
@@ -52,7 +56,9 @@ def test_dark_theme_uses_claude_brand_orange() -> None:
     assert "215;119;87" in s
 
 
-def test_light_theme_uses_light_palette() -> None:
+def test_light_theme_uses_light_palette(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("COLORTERM", "truecolor")
+    monkeypatch.delenv("TERM_PROGRAM", raising=False)
     c = Colors()
     c.configure("light")
     assert c.theme_name == "light"
@@ -106,3 +112,84 @@ def test_wrap_with_empty_string_is_unchanged() -> None:
 def test_module_singleton_exists() -> None:
     """`COLOR` is exposed at module scope so callers can import it directly."""
     assert isinstance(COLOR, Colors)
+
+
+# ----- truecolor capability + 256-color fallback ---------------------------
+
+
+def _no_terminal_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip every env var that influences truecolor detection."""
+    for var in ("LOOM_TRUECOLOR", "COLORTERM", "TERM_PROGRAM"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_apple_terminal_falls_back_to_256_color(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Apple Terminal.app does not render 24-bit RGB faithfully - we MUST
+    emit ``38;5;N`` (256-color) sequences for it instead, otherwise our
+    orange brand reads as a green blob."""
+    _no_terminal_env(monkeypatch)
+    monkeypatch.setenv("TERM_PROGRAM", "Apple_Terminal")
+    c = Colors()
+    c.configure("on")
+    assert c.theme_name == "dark-256"
+    s = c.brand("X")
+    assert "38;5;173" in s   # the 256-color slot for our orange
+    assert "38;2;" not in s  # no 24-bit codes
+
+
+def test_colorterm_truecolor_unlocks_24bit(monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_terminal_env(monkeypatch)
+    monkeypatch.setenv("COLORTERM", "truecolor")
+    c = Colors()
+    c.configure("on")
+    assert c.theme_name == "dark"
+    assert "38;2;215;119;87" in c.brand("X")
+
+
+def test_colorterm_24bit_is_also_recognised(monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_terminal_env(monkeypatch)
+    monkeypatch.setenv("COLORTERM", "24bit")
+    c = Colors()
+    c.configure("on")
+    assert c.theme_name == "dark"
+
+
+def test_loom_truecolor_env_forces_24bit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """User can force 24-bit even on Apple Terminal if they want to test."""
+    _no_terminal_env(monkeypatch)
+    monkeypatch.setenv("TERM_PROGRAM", "Apple_Terminal")
+    monkeypatch.setenv("LOOM_TRUECOLOR", "1")
+    c = Colors()
+    c.configure("on")
+    assert c.theme_name == "dark"
+    assert "38;2;215;119;87" in c.brand("X")
+
+
+def test_loom_truecolor_env_forces_256_color(monkeypatch: pytest.MonkeyPatch) -> None:
+    """User can force 256-color even on iTerm2 if they're scripting screenshots."""
+    _no_terminal_env(monkeypatch)
+    monkeypatch.setenv("COLORTERM", "truecolor")
+    monkeypatch.setenv("LOOM_TRUECOLOR", "0")
+    c = Colors()
+    c.configure("on")
+    assert c.theme_name == "dark-256"
+
+
+def test_light_theme_also_has_256_color_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    _no_terminal_env(monkeypatch)
+    monkeypatch.setenv("TERM_PROGRAM", "Apple_Terminal")
+    c = Colors()
+    c.configure("light")
+    assert c.theme_name == "light-256"
+    # Verify a non-trivial token came through correctly.
+    assert "38;5;" in c.error("E")
+    assert "38;2;" not in c.error("E")
+
+
+def test_unknown_terminal_assumes_truecolor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If we can't detect anything, assume the terminal is modern - the long
+    tail of 24-bit-incapable terminals is small and shrinking."""
+    _no_terminal_env(monkeypatch)
+    c = Colors()
+    c.configure("on")
+    assert c.theme_name == "dark"

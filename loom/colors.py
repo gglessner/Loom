@@ -67,6 +67,34 @@ def _supports_color(stream) -> bool:
     return bool(isatty and isatty())
 
 
+def _supports_truecolor() -> bool:
+    """Detect whether the active terminal renders 24-bit RGB SGR codes
+    (``\\x1b[38;2;R;G;Bm``) faithfully.
+
+    Detection order:
+      1. ``LOOM_TRUECOLOR`` env var (``0``/``1``) - explicit user override.
+      2. ``COLORTERM=truecolor`` / ``COLORTERM=24bit`` - the de-facto
+         convention published by terminals that DO support 24-bit (iTerm2,
+         Windows Terminal, Ghostty, Kitty, Alacritty, GNOME Terminal,
+         Konsole, VS Code's integrated terminal).
+      3. ``TERM_PROGRAM=Apple_Terminal`` - the macOS Terminal.app silently
+         mangles 24-bit codes (often rendering our orange as green). Force
+         256-color fallback.
+      4. Default to ``True`` for any other modern terminal.
+    """
+    explicit = os.environ.get("LOOM_TRUECOLOR")
+    if explicit is not None:
+        return explicit.strip().lower() in ("1", "true", "yes", "on")
+
+    if os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit"):
+        return True
+
+    if os.environ.get("TERM_PROGRAM") == "Apple_Terminal":
+        return False
+
+    return True
+
+
 @dataclass(frozen=True)
 class Theme:
     """An ANSI SGR theme.
@@ -102,6 +130,50 @@ THEME_LIGHT = Theme(
     bold="1",
 )
 
+# ---- 256-color fallbacks ---------------------------------------------------
+#
+# Apple Terminal.app and a long tail of older / minimal terminals don't render
+# 24-bit RGB sequences faithfully (they often map most colors to the same
+# greenish blob). For those, we emit ``\x1b[38;5;Nm`` instead, where N is the
+# nearest match from the xterm-256 palette. Hand-picked rather than runtime
+# computed so each token gets a known-good shade.
+#
+# Reference: https://www.ditig.com/256-colors-cheat-sheet
+#
+#   215,119,87  Claude orange   -> 173 (#d7875f)
+#   130,130,130 dim grey        -> 244 (#808080)
+#   78,186,101  bright green    ->  71 (#5faf5f)
+#   255,107,128 bright red/pink -> 210 (#ff8787)
+#   240,186,0   warning yellow  -> 220 (#ffd700)
+#   103,162,255 info blue       ->  75 (#5fafff)
+#   160,180,200 tool blue-grey  -> 110 (#87afd7)
+
+THEME_DARK_256 = Theme(
+    name="dark-256",
+    brand="38;5;173",
+    text="",
+    dim="38;5;244",
+    success="38;5;71",
+    error="38;5;210",
+    warning="38;5;220",
+    info="38;5;75",
+    tool="38;5;110",
+    bold="1",
+)
+
+THEME_LIGHT_256 = Theme(
+    name="light-256",
+    brand="38;5;173",   # same orange, readable on light backgrounds too
+    text="",
+    dim="38;5;240",     # darker grey for contrast on white
+    success="38;5;28",
+    error="38;5;124",
+    warning="38;5;130",
+    info="38;5;26",
+    tool="38;5;66",
+    bold="1",
+)
+
 THEME_NONE = Theme(
     name="none",
     brand="", text="", dim="", success="", error="",
@@ -132,23 +204,31 @@ class Colors:
             self._theme = THEME_NONE
             return
 
+        # Decide whether colors are enabled at all and which family to use.
         if m == "auto":
             self._enabled = _supports_color(out_stream)
-            theme = THEME_DARK
+            family = "dark"
         elif m in ("on", "true", "yes", "1", "dark"):
             self._enabled = True
-            theme = THEME_DARK
+            family = "dark"
         elif m == "light":
             self._enabled = True
-            theme = THEME_LIGHT
+            family = "light"
         else:
             # Unknown value: behave like auto rather than failing loudly.
             self._enabled = _supports_color(out_stream)
-            theme = THEME_DARK
+            family = "dark"
 
         if self._enabled:
             _enable_windows_vt()
-            self._theme = theme
+            # Down-grade to 256-color when the terminal can't render 24-bit
+            # RGB faithfully (e.g. Apple Terminal.app). LOOM_TRUECOLOR=0/1
+            # is the user's manual override.
+            truecolor = _supports_truecolor()
+            if family == "light":
+                self._theme = THEME_LIGHT if truecolor else THEME_LIGHT_256
+            else:
+                self._theme = THEME_DARK if truecolor else THEME_DARK_256
         else:
             self._theme = THEME_NONE
 

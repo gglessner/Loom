@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "loom-coder"
-version = "1.3.1"
+version = "1.3.3"
 description = "A minimal AI coder for the terminal."
 readme = "README.md"
 requires-python = ">=3.10"

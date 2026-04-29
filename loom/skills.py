@@ -5,8 +5,9 @@ Skills are merged from multiple locations so a user can keep a personal
 library while a project can layer extras on top:
 
   1. ~/.loom/skills/           (user-global)
-  2. <cwd>/.loom/skills/       (project-local, hidden)
-  3. <cwd>/<skills_dir>/       (project-local, configurable; default .loom/skills)
+  2. <cwd>/skills/             (project-shared, visible - check this into git!)
+  3. <cwd>/.loom/skills/       (project-private, hidden - overrides shared)
+  4. <cwd>/<skills_dir>/       (configurable; defaults to .loom/skills, dedup'd)
 
 Later directories override earlier ones if they contain a skill of the same
 filename, so a project-local skill can shadow a user-global one.

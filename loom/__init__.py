@@ -13,7 +13,7 @@ or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License
 for more details: <https://www.gnu.org/licenses/>.
 """
 
-__version__ = "1.3.1"
+__version__ = "1.3.3"
 __author__ = "Garland Glessner"
 __email__ = "gglessner@gmail.com"
 __license__ = "GPL-3.0-or-later"

@@ -1,6 +1,6 @@
 # Loom
 
-[![version](https://img.shields.io/badge/version-1.3.1-D77757)](#changelog) [![python](https://img.shields.io/badge/python-3.10%2B-blue)](#install) [![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE) [![tests](https://img.shields.io/badge/tests-passing-4EBA65)](#tests)
+[![version](https://img.shields.io/badge/version-1.3.3-D77757)](#changelog) [![python](https://img.shields.io/badge/python-3.10%2B-blue)](#install) [![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE) [![tests](https://img.shields.io/badge/tests-passing-4EBA65)](#tests)
 
 Copyright (C) 2026 Garland Glessner &lt;gglessner@gmail.com&gt;
 Licensed under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
@@ -236,8 +236,9 @@ them from these places, with later sources overriding earlier ones of the
 same filename:
 
 1. `~/.loom/skills/`           your personal library
-2. `<cwd>/.loom/skills/`       project-local, hidden directory
-3. `<cwd>/<skills_dir>/`       project-local, configurable via `loom.skills_dir` in `loom.toml`
+2. `<cwd>/skills/`             project-shared, visible (check this into git!)
+3. `<cwd>/.loom/skills/`       project-local, hidden (overrides shared)
+4. `<cwd>/<skills_dir>/`       configurable via `loom.skills_dir` in `loom.toml`
 
 Drop any `.md` file in there and it shows up in `/skills`.
 
@@ -285,6 +286,13 @@ dim grey for tool-call lines and result previews). Cross-platform: Windows
 `ENABLE_VIRTUAL_TERMINAL_PROCESSING` automatically, so no `colorama`
 dependency is required.
 
+**Apple Terminal users:** Terminal.app does not faithfully render 24-bit
+RGB, so Loom auto-detects it (`TERM_PROGRAM=Apple_Terminal`) and emits
+256-color sequences with hand-picked nearest matches - same orange brand,
+correct rendering. iTerm2, Ghostty, Kitty, Alacritty, WezTerm and friends
+all advertise `COLORTERM=truecolor` and get the full 24-bit palette. Force
+the choice manually with `LOOM_TRUECOLOR=1` or `LOOM_TRUECOLOR=0`.
+
 Toggle in `loom.toml`:
 
 ```toml
@@ -326,6 +334,23 @@ pytest -q
 ```
 
 ## Changelog
+
+### 1.3.3
+- Apple Terminal.app fix. Mac's built-in Terminal doesn't render 24-bit RGB
+  faithfully (it tends to mash everything into a green-ish blob). Loom now
+  detects `TERM_PROGRAM=Apple_Terminal` (and any other terminal that doesn't
+  advertise `COLORTERM=truecolor`) and downgrades to 256-color sequences
+  with hand-picked xterm-256 nearest matches - same orange brand, just
+  emitted as `38;5;173` instead of `38;2;215;119;87`.
+- Override either way with `LOOM_TRUECOLOR=1` (force 24-bit) or
+  `LOOM_TRUECOLOR=0` (force 256-color). For when our auto-detection misses
+  your specific terminal.
+
+### 1.3.2
+- Skill discovery now also picks up `<cwd>/skills/` (the natural top-level
+  location), in addition to `<cwd>/.loom/skills/` and `~/.loom/skills/`.
+  Drop a `coding.md` next to your `loom.toml` and it just works -
+  `/skills` will list it on startup.
 
 ### 1.3.1
 - Streaming word-wrap. LLM output is now wrapped to the current terminal
