@@ -21,15 +21,19 @@ cd Loom
 pip install -e .
 
 # 2. one-time user-global config
-loom init                          # creates ~/.loom/loom.toml + ~/.loom/.env
+python -m loom init                # creates ~/.loom/loom.toml + ~/.loom/.env
 # edit ~/.loom/.env and put in OPENROUTER_API_KEY (or VAULT_* + VERTEX_*)
 
 # 3. cd to any codebase and go
 cd path/to/some/project
-loom
+python -m loom
 ```
 
-If `loom` isn't found after install, see [Putting `loom` on your PATH](#putting-loom-on-your-path).
+> **`loom` vs. `python -m loom`** - both invoke the exact same code. `python -m loom`
+> always works as long as `python` is on your PATH. The shorter `loom` command
+> is also installed by `pip`, but only works if its Scripts directory is on
+> PATH (see [Putting `loom` on your PATH](#putting-loom-on-your-path)). The rest of
+> this README uses `loom` for brevity; if it's not found, just prepend `python -m`.
 
 ## Features
 
@@ -50,15 +54,22 @@ If `loom` isn't found after install, see [Putting `loom` on your PATH](#putting-
 pip install -e .
 ```
 
-Python 3.10+. This installs a `loom` console script.
+Python 3.10+. This installs the `loom` package; you can invoke it two ways:
 
-### Putting `loom` on your PATH
+```bash
+python -m loom            # always works as long as python is on PATH
+loom                      # shorter, but requires the Scripts dir to be on PATH
+```
+
+If you only ever use `python -m loom`, you can skip the next section.
+
+### Putting `loom` on your PATH (optional)
 
 `pip install` may print a warning that the Scripts directory isn't on your
 PATH. The exact path depends on your platform; pip will print it. Common
 locations:
 
-- **Windows (cmd.exe / PowerShell)**: `%APPDATA%\Python\Python3xx\Scripts`,
+- **Windows**: `%APPDATA%\Python\Python3xx\Scripts`,
   e.g. `C:\Users\<you>\AppData\Roaming\Python\Python310\Scripts`
 - **macOS**: `~/Library/Python/3.xx/bin`
 - **Linux**: `~/.local/bin`
@@ -80,22 +91,19 @@ export PATH="$HOME/Library/Python/3.11/bin:$PATH"   # macOS, adjust 3.11
 export PATH="$HOME/.local/bin:$PATH"                # Linux
 ```
 
-If you don't want to touch PATH at all, `python -m loom` always works as
-long as `python` is on your PATH. Everything documented for `loom` below
-works as `python -m loom` too.
-
 ## Configure once
 
 ```bash
-loom init
+python -m loom init        # or just `loom init` if PATH is set up
 ```
 
 This creates `~/.loom/loom.toml` and `~/.loom/.env`. Open them and put your
-provider details in - this is your user-global default that `loom` will use
-from any directory.
+provider details in - this is your user-global default that Loom will use
+from any directory. Re-running `loom init` is safe; it won't overwrite
+existing files. Use `--force` if you really want to start over.
 
 ```bash
-loom where     # show which config files Loom would load right now
+python -m loom where       # show which config files Loom would load right now
 ```
 
 ### Config layering
@@ -110,7 +118,8 @@ Loom merges config from these locations, with later layers overriding earlier:
 | 4 (high) | `--config <path>`         | Explicit override for one session            |
 
 `.env` files layer the same way, except OS environment variables always win
-over any `.env` file (so `OPENROUTER_API_KEY=... loom` works as you'd expect).
+over any `.env` file (so `OPENROUTER_API_KEY=... python -m loom` works as
+you'd expect).
 
 ### Vertex
 
@@ -132,11 +141,57 @@ each just before expiry.
 Just set `OPENROUTER_API_KEY` and pick a model (`OPENROUTER_MODEL`,
 default `anthropic/claude-opus-4.7`).
 
+### TLS
+
+Loom does TLS verification by default and gives you two levels of override
+for when something on your network can't be verified out of the box.
+
+#### Internal Vault with an internal CA (most common case)
+
+Your Vault server uses an internal CA that your fresh Mac/Windows install
+doesn't trust, but Vertex/OpenRouter (on public CAs) verify fine. Use the
+Vault-only knob so external traffic stays strictly verified:
+
+```toml
+# ~/.loom/loom.toml - point Vault at your internal CA bundle
+[vault]
+tls_ca_bundle = "/path/to/internal-vault-ca.pem"
+```
+
+Or via env: `VAULT_TLS_CA_BUNDLE=/path/to/internal-vault-ca.pem`.
+
+Don't have the CA file handy? Last resort - disable verification just for
+Vault:
+
+```toml
+[vault]
+tls_verify = false
+```
+
+Or `VAULT_TLS_VERIFY=false`. Loom prints a warning at startup so you don't
+forget. Vertex/OpenRouter still verify normally.
+
+#### Corporate TLS-intercepting proxy (everything fails verification)
+
+If your network does TLS interception (corporate Wi-Fi/VPN) and **all**
+HTTPS calls fail, set the global knob instead - it applies to Vault,
+Vertex, and OpenRouter:
+
+```toml
+[loom]
+tls_ca_bundle = "/path/to/corporate-proxy-ca.pem"     # preferred
+# tls_verify = false                                  # last resort
+```
+
+Or `LOOM_TLS_CA_BUNDLE` / `LOOM_TLS_VERIFY` env vars.
+
+These do *not* affect MCP servers, which manage their own network stacks.
+
 ## Run
 
 ```bash
 cd path/to/some/codebase
-loom
+python -m loom             # or just `loom` if PATH is set up
 ```
 
 Loom opens with that directory as its working directory; every tool call
@@ -159,11 +214,13 @@ response. At the prompt, Ctrl+C exits.
 
 ### Outside the REPL
 
+(Anywhere it says `loom` you can substitute `python -m loom`.)
+
 | Command                          | What it does                                  |
 | -------------------------------- | --------------------------------------------- |
 | `loom`                           | Start a session in the current directory.     |
-| `loom init`                      | Scaffold `~/.loom/loom.toml` and `~/.loom/.env`. |
-| `loom init --force`              | Overwrite existing user-global templates.     |
+| `loom init`                      | Scaffold `~/.loom/loom.toml` and `~/.loom/.env`. Prints `exists` for any file already present. |
+| `loom init --force`              | Overwrite existing user-global templates (will wipe your API key in `.env`!). |
 | `loom where`                     | Show config + .env discovery order for the current cwd. |
 | `loom --provider openrouter`     | One-shot provider override.                   |
 | `loom --provider vertex`         | One-shot provider override.                   |
@@ -222,6 +279,23 @@ loom/
 ```bash
 pytest -q
 ```
+
+## Changelog
+
+### 1.1.0
+- TLS controls for outbound HTTPS: `tls_verify` and `tls_ca_bundle` (also
+  via `LOOM_TLS_*` env vars) apply to Vault, Vertex, and OpenRouter.
+- Vault-specific overrides `vault.tls_verify` / `vault.tls_ca_bundle` (also
+  `VAULT_TLS_*` env vars) for the common case where an internal Vault has a
+  CA your OS doesn't trust but external services like Vertex still do.
+- Loud startup warning when verification is disabled; urllib3's per-request
+  `InsecureRequestWarning` is silenced so logs stay readable.
+
+### 1.0.0
+- Initial release. Multi-turn agentic loop, streaming with Ctrl+C interrupt,
+  Vertex (via Vault AppRole) and OpenRouter providers, real MCP support,
+  layered config (`~/.loom`, project, OS env), per-project + user-global
+  skills, builtin filesystem/search/shell/excel tools.
 
 ## License
 

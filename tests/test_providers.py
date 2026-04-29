@@ -84,6 +84,13 @@ def test_openrouter_tool_translation() -> None:
     assert out[0]["function"]["name"] == "t"
 
 
+def test_openrouter_propagates_verify_flag() -> None:
+    p = OpenRouterProvider(OpenRouterConfig(api_key="x"), verify=False)
+    assert p._session.verify is False
+    p2 = OpenRouterProvider(OpenRouterConfig(api_key="x"), verify="/etc/ssl/corp.pem")
+    assert p2._session.verify == "/etc/ssl/corp.pem"
+
+
 # ----- agent loop -----------------------------------------------------------
 
 

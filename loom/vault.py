@@ -38,7 +38,13 @@ class _Cached:
 class VaultClient:
     """Thread-safe Vault AppRole client with GCP token extraction."""
 
-    def __init__(self, cfg: VaultConfig, *, timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        cfg: VaultConfig,
+        *,
+        timeout: float = 10.0,
+        verify=True,
+    ) -> None:
         if not cfg.configured:
             raise VaultError(
                 "VaultConfig is not fully configured (need url, role_id, secret_id, token_path)."
@@ -46,6 +52,7 @@ class VaultClient:
         self._cfg = cfg
         self._timeout = timeout
         self._session = requests.Session()
+        self._session.verify = verify
         self._lock = Lock()
         self._client_token: Optional[_Cached] = None
         self._gcp_token: Optional[_Cached] = None

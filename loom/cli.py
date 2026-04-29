@@ -23,12 +23,45 @@ from .config import (
     USER_HOME,
     discover_config_paths,
     load_config,
+    resolve_tls_verify,
     validate_for_provider,
 )
 from .mcp_runtime import MCPRuntime
 from .providers import Message, build_provider
 from .skills import SkillManager
 from .tools.registry import ToolRegistry, builtin_tools
+
+
+def _apply_tls_settings(cfg: LoomConfig) -> None:
+    """Suppress urllib3's per-request warning when verification is off, and
+    emit one loud startup line so the user is reminded their traffic is
+    insecure. A custom CA bundle path is fine - no warning needed."""
+    global_off = not cfg.tls_verify
+    vault_off = cfg.vault.tls_verify is False
+    any_off = global_off or vault_off
+    if any_off:
+        try:
+            import urllib3
+
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        except Exception:
+            pass
+    if global_off:
+        print(
+            "[!] TLS verification is DISABLED globally (loom.tls_verify=false). "
+            "Traffic to Vault, Vertex, and OpenRouter is encrypted but server "
+            "certificates are NOT being validated. Prefer setting tls_ca_bundle "
+            "to a CA file instead."
+        )
+    elif vault_off:
+        print(
+            "[!] TLS verification is DISABLED for Vault only "
+            "(vault.tls_verify=false). Vertex/OpenRouter still verify normally."
+        )
+    if cfg.tls_ca_bundle:
+        print(f"[*] Global TLS CA bundle: {cfg.tls_ca_bundle}")
+    if cfg.vault.tls_ca_bundle:
+        print(f"[*] Vault-specific TLS CA bundle: {cfg.vault.tls_ca_bundle}")
 
 
 BANNER = """
@@ -228,6 +261,12 @@ provider = "openrouter"
 max_tokens = 4096
 temperature = 0.4
 
+# --- TLS (apply to Vault, Vertex, and OpenRouter) ---
+# If you hit SSLError behind a corporate proxy, point this at its CA bundle:
+# tls_ca_bundle = "/path/to/corporate-ca.pem"
+# Last resort (NOT recommended):
+# tls_verify = false
+
 [openrouter]
 # Set OPENROUTER_API_KEY in ~/.loom/.env (preferred) or your shell.
 model = "anthropic/claude-opus-4.7"
@@ -263,6 +302,10 @@ VAULT_TOKEN_PATH=
 VERTEX_PROJECT_ID=
 VERTEX_REGION=us-east5
 VERTEX_MODEL=claude-opus-4-6
+
+# TLS (uncomment if you're behind a TLS-intercepting proxy)
+# LOOM_TLS_CA_BUNDLE=/etc/ssl/certs/corporate-ca.pem
+# LOOM_TLS_VERIFY=false
 """
 
 
@@ -338,6 +381,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         print()
         print("Hint: run `loom init` to create ~/.loom/, then edit ~/.loom/.env.")
         return 2
+
+    _apply_tls_settings(cfg)
 
     cli = LoomCLI(cfg)
     try:

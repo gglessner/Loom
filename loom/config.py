@@ -45,6 +45,13 @@ class VaultConfig:
     secret_id: str = ""
     token_path: str = ""
     approle_mount: str = "approle"
+    # Vault-specific TLS overrides. Useful when the Vault server's CA isn't
+    # trusted by the OS (e.g. an internal CA missing from a fresh Mac) but
+    # external services like Vertex still have valid public certs you want
+    # to keep verifying. Leave at the defaults to inherit the top-level
+    # loom.tls_* settings.
+    tls_verify: Optional[bool] = None    # None = inherit loom.tls_verify
+    tls_ca_bundle: str = ""              # empty = inherit loom.tls_ca_bundle
 
     @property
     def configured(self) -> bool:
@@ -68,6 +75,13 @@ class LoomConfig:
     # Project-local skills directory (relative to CWD). User-global skills
     # always come from ~/.loom/skills in addition to this.
     skills_dir: str = ".loom/skills"
+    # TLS settings applied to every outbound HTTP call (Vault, Vertex,
+    # OpenRouter). Set tls_ca_bundle to your corporate CA file path - that
+    # solves SSLError without compromising verification. tls_verify=false is
+    # a last resort for environments with TLS interception you can't fix;
+    # Loom will print a loud warning at startup when it's off.
+    tls_verify: bool = True
+    tls_ca_bundle: str = ""
     system_prompt: str = (
         "You are Loom, a focused coding assistant running in an agentic loop "
         "on the user's local machine. You have file, search, shell, and "
@@ -194,6 +208,13 @@ def load_config(
     # Env overrides
     cfg.provider = os.getenv("LOOM_PROVIDER", cfg.provider).lower()
 
+    tls_verify_env = os.getenv("LOOM_TLS_VERIFY")
+    if tls_verify_env is not None:
+        cfg.tls_verify = tls_verify_env.strip().lower() not in {
+            "0", "false", "no", "off", ""
+        }
+    cfg.tls_ca_bundle = os.getenv("LOOM_TLS_CA_BUNDLE", cfg.tls_ca_bundle)
+
     cfg.openrouter.api_key = os.getenv("OPENROUTER_API_KEY", cfg.openrouter.api_key)
     cfg.openrouter.model = os.getenv("OPENROUTER_MODEL", cfg.openrouter.model)
 
@@ -207,7 +228,41 @@ def load_config(
     cfg.vault.secret_id = os.getenv("VAULT_SECRET_ID", cfg.vault.secret_id)
     cfg.vault.token_path = os.getenv("VAULT_TOKEN_PATH", cfg.vault.token_path)
 
+    vault_tls_env = os.getenv("VAULT_TLS_VERIFY")
+    if vault_tls_env is not None:
+        cfg.vault.tls_verify = vault_tls_env.strip().lower() not in {
+            "0", "false", "no", "off", ""
+        }
+    cfg.vault.tls_ca_bundle = os.getenv("VAULT_TLS_CA_BUNDLE", cfg.vault.tls_ca_bundle)
+
     return cfg
+
+
+def resolve_tls_verify(cfg: LoomConfig):
+    """Return the value to pass as ``verify=`` to requests/httpx for the
+    *non-Vault* HTTP clients (Vertex, OpenRouter).
+
+    Returns:
+      * a string path if ``tls_ca_bundle`` is set (verification stays on but
+        uses the supplied CA bundle - the *correct* fix for corporate proxies),
+      * ``False`` if the user explicitly disabled verification,
+      * ``True`` (default) for normal certificate validation.
+    """
+    if cfg.tls_ca_bundle:
+        return cfg.tls_ca_bundle
+    return bool(cfg.tls_verify)
+
+
+def resolve_vault_tls_verify(cfg: LoomConfig):
+    """Like :func:`resolve_tls_verify` but applies the Vault-specific
+    overrides (``vault.tls_ca_bundle`` / ``vault.tls_verify``) on top of the
+    global setting. Vault-specific values, when set, win over global ones.
+    """
+    if cfg.vault.tls_ca_bundle:
+        return cfg.vault.tls_ca_bundle
+    if cfg.vault.tls_verify is not None:
+        return bool(cfg.vault.tls_verify)
+    return resolve_tls_verify(cfg)
 
 
 def validate_for_provider(cfg: LoomConfig) -> list[str]:

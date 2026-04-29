@@ -13,6 +13,7 @@ import json
 from threading import Event
 from typing import Any, Iterator, Optional
 
+import httpx
 from anthropic import AnthropicVertex
 from google.oauth2.credentials import Credentials
 
@@ -24,9 +25,16 @@ from .base import Done, Message, StreamEvent, TextDelta, Tool, ToolCall, ToolCal
 class VertexProvider:
     name = "vertex"
 
-    def __init__(self, cfg: VertexConfig, *, vault: VaultClient) -> None:
+    def __init__(
+        self,
+        cfg: VertexConfig,
+        *,
+        vault: VaultClient,
+        verify=True,
+    ) -> None:
         self._cfg = cfg
         self._vault = vault
+        self._verify = verify
         self.model = cfg.model
         self._client: Optional[AnthropicVertex] = None
         self._client_token: Optional[str] = None
@@ -37,10 +45,14 @@ class VertexProvider:
         token = self._vault.get_gcp_access_token()
         if self._client is None or token != self._client_token:
             creds = Credentials(token=token)
+            # Hand the SDK an httpx.Client honouring our TLS settings so that
+            # corporate-proxy CA bundles or verify=False reach Vertex too.
+            http_client = httpx.Client(verify=self._verify, timeout=600)
             self._client = AnthropicVertex(
                 project_id=self._cfg.project_id,
                 region=self._cfg.region,
                 credentials=creds,
+                http_client=http_client,
             )
             self._client_token = token
         return self._client

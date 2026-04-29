@@ -7,8 +7,17 @@ provider = "vertex"
 max_tokens = 4096
 temperature = 0.4
 max_agent_steps = 30
-# Where to look for *.md skill files.
-skills_dir = "skills"
+# Where to look for *.md skill files (relative to your cwd).
+skills_dir = ".loom/skills"
+
+# --- TLS settings (apply to Vault, Vertex, and OpenRouter) ---
+# If your network has TLS interception (corporate proxy), point this at
+# the proxy's CA bundle file. This is the *correct* fix for SSLError.
+# tls_ca_bundle = "/path/to/corporate-ca.pem"
+#
+# Last resort: disable verification entirely. Loom will print a loud warning
+# at startup. Prefer tls_ca_bundle wherever possible.
+# tls_verify = false
 
 [openrouter]
 # api_key supplied via OPENROUTER_API_KEY env var.
@@ -35,6 +44,12 @@ secret_id = ""
 token_path = ""
 # AppRole mount path (rarely changed).
 approle_mount = "approle"
+
+# Vault-only TLS overrides. Useful when your Vault server uses an internal
+# CA your machine doesn't trust, but you DON'T want to weaken verification
+# for external services like Vertex/OpenRouter.
+# tls_ca_bundle = "/path/to/internal-vault-ca.pem"
+# tls_verify = false   # last resort
 
 # --- Optional: real MCP servers (stdio transport) ---
 # Each entry spawns a subprocess and exposes its tools to the agent.

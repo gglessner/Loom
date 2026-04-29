@@ -89,14 +89,19 @@ def build_provider(cfg) -> Provider:
     Imported lazily so users without (e.g.) the anthropic SDK can still run
     OpenRouter, and vice versa.
     """
+    from ..config import resolve_tls_verify, resolve_vault_tls_verify
+
+    verify = resolve_tls_verify(cfg)
     if cfg.provider == "openrouter":
         from .openrouter import OpenRouterProvider
 
-        return OpenRouterProvider(cfg.openrouter)
+        return OpenRouterProvider(cfg.openrouter, verify=verify)
     if cfg.provider == "vertex":
         from .vertex import VertexProvider
         from ..vault import VaultClient
 
-        vault = VaultClient(cfg.vault)
-        return VertexProvider(cfg.vertex, vault=vault)
+        # Vault often runs on an internal CA that public OS trust stores
+        # don't carry; let it use a separate verify setting.
+        vault = VaultClient(cfg.vault, verify=resolve_vault_tls_verify(cfg))
+        return VertexProvider(cfg.vertex, vault=vault, verify=verify)
     raise ValueError(f"Unknown provider: {cfg.provider!r}")

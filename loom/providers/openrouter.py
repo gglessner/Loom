@@ -15,10 +15,11 @@ from .base import Done, Message, StreamEvent, TextDelta, Tool, ToolCall, ToolCal
 class OpenRouterProvider:
     name = "openrouter"
 
-    def __init__(self, cfg: OpenRouterConfig) -> None:
+    def __init__(self, cfg: OpenRouterConfig, *, verify=True) -> None:
         self._cfg = cfg
         self.model = cfg.model
         self._session = requests.Session()
+        self._session.verify = verify
 
     # ----- translation -------------------------------------------------------
 
