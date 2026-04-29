@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "loom-coder"
+version = "1.0.0"
+description = "A minimal AI coder for the terminal."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Garland Glessner", email = "gglessner@gmail.com" }]
+dependencies = [
+    "anthropic[vertex]>=0.40",
+    "google-auth>=2.0",
+    "mcp>=1.0",
+    "requests>=2.31",
+    "openpyxl>=3.1",
+    "python-dotenv>=1.0",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+loom = "loom.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["loom*"]
+exclude = ["tests*"]

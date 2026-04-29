@@ -1,0 +1,45 @@
+# Loom configuration. Copy to loom.toml and edit.
+# Env vars (see .env.example) override anything set here.
+
+[loom]
+# "vertex" for Claude on Vertex AI, "openrouter" for OpenRouter.ai.
+provider = "vertex"
+max_tokens = 4096
+temperature = 0.4
+max_agent_steps = 30
+# Where to look for *.md skill files.
+skills_dir = "skills"
+
+[openrouter]
+# api_key supplied via OPENROUTER_API_KEY env var.
+model = "anthropic/claude-opus-4.7"
+base_url = "https://openrouter.ai/api/v1"
+
+[vertex]
+# project_id / region / model can also come from VERTEX_* env vars.
+project_id = ""
+region = "us-east5"
+model = "claude-opus-4-6"
+
+[vault]
+# Used only when provider = "vertex".
+# All of these can also be set via VAULT_* env vars.
+url = ""
+namespace = ""
+role_id = ""
+# secret_id should normally come from VAULT_SECRET_ID env var, never the file.
+secret_id = ""
+# Path to the secret to read after AppRole login. Typical Vault GCP secrets
+# engine roleset path: "gcp/token/<roleset>". Loom auto-detects an OAuth token
+# under data.token / data.access_token in the response.
+token_path = ""
+# AppRole mount path (rarely changed).
+approle_mount = "approle"
+
+# --- Optional: real MCP servers (stdio transport) ---
+# Each entry spawns a subprocess and exposes its tools to the agent.
+# [[mcp_servers]]
+# name = "filesystem"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
+# env = {}
