@@ -14,7 +14,11 @@ from threading import Event
 from typing import Any, Iterator, Optional
 
 import httpx
-from anthropic import AnthropicVertex
+from anthropic import (
+    AnthropicVertex,
+    AuthenticationError,
+    PermissionDeniedError,
+)
 from google.oauth2.credentials import Credentials
 
 from ..config import VertexConfig
@@ -41,8 +45,13 @@ class VertexProvider:
 
     # ----- credential management --------------------------------------------
 
-    def _get_client(self) -> AnthropicVertex:
-        token = self._vault.get_gcp_access_token()
+    def _get_client(self, *, force_refresh: bool = False) -> AnthropicVertex:
+        token = self._vault.get_gcp_access_token(force_refresh=force_refresh)
+        if force_refresh:
+            # Drop the old client unconditionally so that a previously-cached
+            # AnthropicVertex bound to a stale credential is rebuilt with the
+            # fresh token below.
+            self._client = None
         if self._client is None or token != self._client_token:
             creds = Credentials(token=token)
             # Hand the SDK an httpx.Client honouring our TLS settings so that
@@ -56,6 +65,26 @@ class VertexProvider:
             )
             self._client_token = token
         return self._client
+
+    def _open_stream(self, kwargs: dict[str, Any]):
+        """Open a Messages stream, retrying once if the GCP token is rejected.
+
+        Vertex returns 401/403 when the OAuth bearer is stale or revoked
+        between mint-time and use-time (clock skew, IAM change, etc.). The
+        Vault layer already proactively refreshes ahead of TTL, but for these
+        edge cases we force a fresh GCP token, rebuild the client, and try
+        once more before propagating the error to the agent loop.
+        """
+        try:
+            client = self._get_client()
+            cm = client.messages.stream(**kwargs)
+            stream = cm.__enter__()
+            return cm, stream
+        except (AuthenticationError, PermissionDeniedError):
+            client = self._get_client(force_refresh=True)
+            cm = client.messages.stream(**kwargs)
+            stream = cm.__enter__()
+            return cm, stream
 
     # ----- translation -------------------------------------------------------
 
@@ -145,7 +174,6 @@ class VertexProvider:
         temperature: float,
         cancel: Optional[Event] = None,
     ) -> Iterator[StreamEvent]:
-        client = self._get_client()
         system, convo = self._split_system(messages)
 
         kwargs: dict[str, Any] = {
@@ -164,67 +192,68 @@ class VertexProvider:
         active_tool: dict[int, dict[str, Any]] = {}
         finish_reason: Optional[str] = None
 
-        with client.messages.stream(**kwargs) as stream:
-            try:
-                for event in stream:
-                    if cancel is not None and cancel.is_set():
-                        finish_reason = "interrupted"
-                        break
+        # Closing the context manager (cm.__exit__) aborts the underlying HTTP
+        # stream if we exit early (e.g. cancellation or a generator-close
+        # propagated up from the agent loop).
+        cm, stream = self._open_stream(kwargs)
+        try:
+            for event in stream:
+                if cancel is not None and cancel.is_set():
+                    finish_reason = "interrupted"
+                    break
 
-                    et = getattr(event, "type", None)
+                et = getattr(event, "type", None)
 
-                    if et == "content_block_start":
-                        block = getattr(event, "content_block", None)
-                        if block is not None and getattr(block, "type", None) == "tool_use":
-                            active_tool[event.index] = {
-                                "id": getattr(block, "id", ""),
-                                "name": getattr(block, "name", ""),
-                                "input_json": "",
-                            }
+                if et == "content_block_start":
+                    block = getattr(event, "content_block", None)
+                    if block is not None and getattr(block, "type", None) == "tool_use":
+                        active_tool[event.index] = {
+                            "id": getattr(block, "id", ""),
+                            "name": getattr(block, "name", ""),
+                            "input_json": "",
+                        }
 
-                    elif et == "content_block_delta":
-                        delta = getattr(event, "delta", None)
-                        if delta is None:
-                            continue
-                        dt = getattr(delta, "type", None)
-                        if dt == "text_delta":
-                            text = getattr(delta, "text", "")
-                            if text:
-                                yield TextDelta(text=text)
-                        elif dt == "input_json_delta":
-                            slot = active_tool.get(event.index)
-                            if slot is not None:
-                                slot["input_json"] += getattr(delta, "partial_json", "")
-
-                    elif et == "content_block_stop":
-                        slot = active_tool.pop(event.index, None)
+                elif et == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    if delta is None:
+                        continue
+                    dt = getattr(delta, "type", None)
+                    if dt == "text_delta":
+                        text = getattr(delta, "text", "")
+                        if text:
+                            yield TextDelta(text=text)
+                    elif dt == "input_json_delta":
+                        slot = active_tool.get(event.index)
                         if slot is not None:
-                            try:
-                                args = (
-                                    json.loads(slot["input_json"])
-                                    if slot["input_json"]
-                                    else {}
-                                )
-                            except json.JSONDecodeError:
-                                args = {"_raw": slot["input_json"]}
-                            yield ToolCallEvent(
-                                tool_call=ToolCall(
-                                    id=slot["id"], name=slot["name"], arguments=args
-                                )
+                            slot["input_json"] += getattr(delta, "partial_json", "")
+
+                elif et == "content_block_stop":
+                    slot = active_tool.pop(event.index, None)
+                    if slot is not None:
+                        try:
+                            args = (
+                                json.loads(slot["input_json"])
+                                if slot["input_json"]
+                                else {}
                             )
+                        except json.JSONDecodeError:
+                            args = {"_raw": slot["input_json"]}
+                        yield ToolCallEvent(
+                            tool_call=ToolCall(
+                                id=slot["id"], name=slot["name"], arguments=args
+                            )
+                        )
 
-                    elif et == "message_delta":
-                        delta = getattr(event, "delta", None)
-                        if delta is not None:
-                            sr = getattr(delta, "stop_reason", None)
-                            if sr:
-                                finish_reason = sr
+                elif et == "message_delta":
+                    delta = getattr(event, "delta", None)
+                    if delta is not None:
+                        sr = getattr(delta, "stop_reason", None)
+                        if sr:
+                            finish_reason = sr
 
-                    elif et == "message_stop":
-                        break
-            finally:
-                # Closing the context manager aborts the underlying HTTP stream
-                # if we exited early (e.g. cancellation).
-                pass
+                elif et == "message_stop":
+                    break
+        finally:
+            cm.__exit__(None, None, None)
 
         yield Done(stop_reason=finish_reason or "end_turn")

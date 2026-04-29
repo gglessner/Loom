@@ -106,6 +106,49 @@ def test_missing_token_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         client.get_gcp_access_token()
 
 
+def test_403_permission_denied_falls_back_to_post(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If GET (read) is denied, Loom should retry as POST (update)."""
+    client, fake = _make_client(monkeypatch)
+    perm_denied = _FakeResp(
+        403, '{"errors":["1 error occurred:\\n\\t* permission denied\\n\\n"]}'
+    )
+    perm_denied.text = '{"errors":["permission denied"]}'  # ensure substring match
+    fake.queue(
+        _FakeResp(200, {"auth": {"client_token": "t1", "lease_duration": 3600}}),
+        perm_denied,  # initial GET -> 403 perm denied
+        _FakeResp(200, {"auth": {"client_token": "t2", "lease_duration": 3600}}),  # relogin
+        _FakeResp(403, "permission denied"),  # retry GET still 403
+        _FakeResp(200, {"data": {"token": "post-tok", "token_ttl": 1800}}),  # POST works
+    )
+    token = client.get_gcp_access_token()
+    assert token == "post-tok"
+    methods = [c[0] for c in fake.calls]
+    assert methods == ["POST", "GET", "POST", "GET", "POST"]
+    # last call should be POST to the secret URL, not the login URL
+    last = fake.calls[-1]
+    assert last[0] == "POST" and last[1].endswith("/v1/gcp/token/example")
+
+
+def test_403_permission_denied_after_post_raises_helpful_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When both GET and POST are denied, the error should hint at the policy fix."""
+    client, fake = _make_client(monkeypatch)
+    fake.queue(
+        _FakeResp(200, {"auth": {"client_token": "t1", "lease_duration": 3600}}),
+        _FakeResp(403, "permission denied"),  # initial GET
+        _FakeResp(200, {"auth": {"client_token": "t2", "lease_duration": 3600}}),  # relogin
+        _FakeResp(403, "permission denied"),  # retry GET
+        _FakeResp(403, "permission denied"),  # POST attempt
+        _FakeResp(200, {"auth": {"client_token": "t3", "lease_duration": 3600}}),  # relogin for POST
+        _FakeResp(403, "permission denied"),  # POST retry still denied
+    )
+    with pytest.raises(VaultError) as exc:
+        client.get_gcp_access_token()
+    msg = str(exc.value)
+    assert "permission denied" in msg.lower()
+    assert "capabilities" in msg
+    assert "gcp/token/example" in msg
+
+
 def test_kv_v2_shape_supported(monkeypatch: pytest.MonkeyPatch) -> None:
     client, fake = _make_client(monkeypatch)
     fake.queue(

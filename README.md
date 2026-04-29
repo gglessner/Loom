@@ -282,6 +282,21 @@ pytest -q
 
 ## Changelog
 
+### 1.2.1
+- Vertex provider: transparent one-shot retry on `401 AuthenticationError` /
+  `403 PermissionDeniedError`. We force-refresh the GCP access token from
+  Vault, rebuild the `AnthropicVertex` client, and reopen the stream once
+  before propagating the error - covers clock skew and mid-session token
+  revocation that the proactive 60-second leeway can't catch.
+
+### 1.2.0
+- Vault GCP secrets: if `GET <path>/token` returns 403 *permission denied*,
+  Loom transparently retries as `POST` (Vault accepts both methods, and many
+  site policies grant `update` rather than `read`).
+- When both methods are denied, the error message now includes a copy-paste
+  policy snippet and a `vault token capabilities` diagnostic command, so it's
+  obvious whether you need a Vault admin or just the wrong path.
+
 ### 1.1.0
 - TLS controls for outbound HTTPS: `tls_verify` and `tls_ca_bundle` (also
   via `LOOM_TLS_*` env vars) apply to Vault, Vertex, and OpenRouter.

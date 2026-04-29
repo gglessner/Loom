@@ -91,6 +91,141 @@ def test_openrouter_propagates_verify_flag() -> None:
     assert p2._session.verify == "/etc/ssl/corp.pem"
 
 
+# ----- Vertex auth-retry ----------------------------------------------------
+
+
+class _FakeStreamCM:
+    """Stand-in for anthropic SDK's stream context manager."""
+
+    def __init__(self, events=None, raise_on_enter=None):
+        self._events = events or []
+        self._raise_on_enter = raise_on_enter
+        self.entered = False
+        self.exited = False
+
+    def __enter__(self):
+        self.entered = True
+        if self._raise_on_enter is not None:
+            raise self._raise_on_enter
+        return iter(self._events)
+
+    def __exit__(self, exc_type, exc, tb):
+        self.exited = True
+        return False
+
+
+class _FakeMessages:
+    def __init__(self, cms):
+        self._cms = list(cms)
+        self.calls = []
+
+    def stream(self, **kwargs):
+        self.calls.append(kwargs)
+        return self._cms.pop(0)
+
+
+class _FakeAnthropicClient:
+    def __init__(self, cms):
+        self.messages = _FakeMessages(cms)
+
+
+class _FakeVault:
+    def __init__(self):
+        self.tokens = ["stale-token", "fresh-token"]
+        self.force_refresh_count = 0
+        self.calls = 0
+
+    def get_gcp_access_token(self, *, force_refresh: bool = False) -> str:
+        self.calls += 1
+        if force_refresh:
+            self.force_refresh_count += 1
+            return self.tokens[1]
+        return self.tokens[0]
+
+
+def _make_vertex_with_fakes(stream_cms, vault) -> VertexProvider:
+    """Build a VertexProvider that bypasses real AnthropicVertex/vault."""
+    p = VertexProvider.__new__(VertexProvider)
+    p._cfg = VertexConfig(project_id="proj", region="us-east5", model="claude-opus-4-6")
+    p._vault = vault
+    p._verify = True
+    p.model = p._cfg.model
+    p._client = None
+    p._client_token = None
+
+    fake_clients = [_FakeAnthropicClient([cm]) for cm in stream_cms]
+    fake_clients_iter = iter(fake_clients)
+
+    def fake_get_client(*, force_refresh: bool = False):
+        vault.get_gcp_access_token(force_refresh=force_refresh)
+        return next(fake_clients_iter)
+
+    p._get_client = fake_get_client  # type: ignore[assignment]
+    return p
+
+
+def _auth_error() -> Exception:
+    """Construct a real anthropic.AuthenticationError without an HTTP round-trip."""
+    import httpx
+    from anthropic import AuthenticationError
+
+    req = httpx.Request("POST", "https://example.invalid/")
+    resp = httpx.Response(401, request=req)
+    return AuthenticationError("Unauthorized", response=resp, body=None)
+
+
+def test_vertex_retries_once_on_authentication_error() -> None:
+    """Stale GCP token -> force-refresh + rebuild client + retry once."""
+    # First stream open raises 401; second yields a normal completion.
+    bad_cm = _FakeStreamCM(raise_on_enter=_auth_error())
+    good_cm = _FakeStreamCM(events=[])  # no events -> just emits Done
+
+    vault = _FakeVault()
+    provider = _make_vertex_with_fakes([bad_cm, good_cm], vault)
+
+    events = list(
+        provider.stream(
+            [Message(role="user", content="hi")],
+            [],
+            max_tokens=10,
+            temperature=0.0,
+        )
+    )
+
+    # The retry actually happened.
+    assert vault.force_refresh_count == 1
+    # Both context managers were entered; the failed one was not __exited__
+    # (because __enter__ raised), the successful one was properly closed.
+    assert bad_cm.entered is True and bad_cm.exited is False
+    assert good_cm.entered is True and good_cm.exited is True
+    # We still produced a terminal Done event for the agent loop.
+    assert isinstance(events[-1], Done)
+    assert events[-1].stop_reason == "end_turn"
+
+
+def test_vertex_does_not_retry_more_than_once() -> None:
+    """Two consecutive 401s should bubble up; we do not loop forever."""
+    bad1 = _FakeStreamCM(raise_on_enter=_auth_error())
+    bad2 = _FakeStreamCM(raise_on_enter=_auth_error())
+    vault = _FakeVault()
+    provider = _make_vertex_with_fakes([bad1, bad2], vault)
+
+    from anthropic import AuthenticationError
+
+    with pytest.raises(AuthenticationError):
+        list(
+            provider.stream(
+                [Message(role="user", content="hi")],
+                [],
+                max_tokens=10,
+                temperature=0.0,
+            )
+        )
+    assert vault.force_refresh_count == 1
+    assert bad1.entered is True
+    assert bad2.entered is True
+
+
 # ----- agent loop -----------------------------------------------------------
 
 

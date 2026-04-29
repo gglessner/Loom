@@ -93,15 +93,53 @@ class VaultClient:
         self._ensure_session()
         path = path.strip("/")
         url = f"{self._cfg.url.rstrip('/')}/v1/{path}"
-        resp = self._session.get(url, headers=self._headers(with_token=True), timeout=self._timeout)
-        if resp.status_code == 403:
-            # Token may have expired between calls; re-login and retry once.
-            self._client_token = self._login()
-            resp = self._session.get(
+
+        def do_get() -> "requests.Response":
+            return self._session.get(
                 url, headers=self._headers(with_token=True), timeout=self._timeout
             )
+
+        def do_post() -> "requests.Response":
+            return self._session.post(
+                url, headers=self._headers(with_token=True), timeout=self._timeout
+            )
+
+        resp = do_get()
+        # Token may have expired between calls; re-login and retry the GET once.
+        if resp.status_code == 403:
+            self._client_token = self._login()
+            resp = do_get()
+
+        # Vault GCP secrets engine accepts both GET and POST on the */token
+        # endpoints. Some site policies only grant `update` (POST), not `read`
+        # (GET). If GET still 403s with a permission-denied body, fall back to
+        # POST before giving up - it's the same operation as far as Vault is
+        # concerned and harmless if the policy already allows GET.
+        if resp.status_code == 403 and "permission denied" in resp.text.lower():
+            post_resp = do_post()
+            if post_resp.status_code != 200 and post_resp.status_code == 403:
+                # one final relogin+POST attempt, in case the second GET expired the token
+                self._client_token = self._login()
+                post_resp = do_post()
+            if post_resp.status_code == 200:
+                return post_resp.json()
+            # Fall through with the original GET error if POST didn't help.
+
         if resp.status_code != 200:
-            raise VaultError(f"Vault read {path!r} failed [{resp.status_code}]: {resp.text}")
+            hint = ""
+            if resp.status_code == 403 and "permission denied" in resp.text.lower():
+                hint = (
+                    "\n\nHint: AppRole auth succeeded but the resulting Vault token "
+                    "lacks permission on this path. Loom tried both GET (read) and "
+                    "POST (update); both were denied. Ask your Vault admin to grant "
+                    f"a policy like:\n\n  path \"{path}\" {{\n    "
+                    "capabilities = [\"read\", \"update\"]\n  }\n\n"
+                    "If you are using a Vault namespace, make sure the policy is "
+                    "attached to the AppRole inside that same namespace. You can "
+                    "verify what your AppRole's token can actually do with:\n\n"
+                    f"  vault token capabilities <token> {path}\n"
+                )
+            raise VaultError(f"Vault read {path!r} failed [{resp.status_code}]: {resp.text}{hint}")
         return resp.json()
 
     @staticmethod
