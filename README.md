@@ -1,5 +1,7 @@
 # Loom
 
+[![version](https://img.shields.io/badge/version-1.3.1-D77757)](#changelog) [![python](https://img.shields.io/badge/python-3.10%2B-blue)](#install) [![license](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE) [![tests](https://img.shields.io/badge/tests-passing-4EBA65)](#tests)
+
 Copyright (C) 2026 Garland Glessner &lt;gglessner@gmail.com&gt;
 Licensed under the GNU General Public License v3.0 or later. See [LICENSE](LICENSE).
 
@@ -274,6 +276,49 @@ loom/
     excel.py        excel_read / excel_write / excel_sheets
 ```
 
+## Colors
+
+Loom mimics Claude Code's accent palette (orange brand `rgb(215,119,87)`,
+plus semantic red/yellow/green/blue for errors/warnings/success/info, and a
+dim grey for tool-call lines and result previews). Cross-platform: Windows
+11, Linux, and macOS. On Windows the agent enables
+`ENABLE_VIRTUAL_TERMINAL_PROCESSING` automatically, so no `colorama`
+dependency is required.
+
+Toggle in `loom.toml`:
+
+```toml
+[loom]
+color = "auto"   # default: on if stdout is a TTY and NO_COLOR is not set
+# color = "on"   # force on (alias: "true", "dark")
+# color = "light"
+# color = "off"  # never colorize (alias: "false", "none")
+```
+
+Or via env (highest precedence):
+
+```bash
+LOOM_COLOR=off    # explicit Loom-only override
+NO_COLOR=1        # global convention (https://no-color.org/) - all CLI tools
+FORCE_COLOR=1     # force on even when stdout isn't a TTY
+```
+
+## Wrapping
+
+The model's text is word-wrapped to the current terminal width on each
+turn, so window resizes between turns are honoured automatically. Code
+blocks (``` ... ```) are streamed verbatim - source code layout is never
+chopped at a column.
+
+```toml
+[loom]
+wrap = "auto"   # default: current terminal columns
+# wrap = "off"  # raw streaming, terminal hard-wraps as it sees fit
+# wrap = 100    # fixed column count (useful when piping to a file)
+```
+
+Or via env: `LOOM_WRAP=off` / `LOOM_WRAP=120`.
+
 ## Tests
 
 ```bash
@@ -281,6 +326,47 @@ pytest -q
 ```
 
 ## Changelog
+
+### 1.3.1
+- Streaming word-wrap. LLM output is now wrapped to the current terminal
+  width at word boundaries, so long sentences no longer get sliced
+  mid-character by the terminal. Code fences (``` ... ```) are detected
+  and preserved verbatim - source code layout never gets clobbered.
+  Toggle via `[loom] wrap = "auto" | "off" | <int>` (also `LOOM_WRAP`).
+- Visible version line + shields in README so a new release is obvious from
+  the GitHub landing page.
+
+### 1.3.0
+- Default `max_tokens` raised from 4096 to **128000** (Claude Opus 4.6's hard
+  cap). It's a ceiling, not a target - you only pay for what the model
+  actually emits, and adaptive thinking finally has the headroom it needs.
+- New `[loom] color = "auto"` setting (also `LOOM_COLOR` env var). Adds a
+  Claude-Code-inspired terminal palette: orange brand accent
+  (`rgb(215,119,87)`) on the banner / prompt, dim grey for tool calls and
+  result previews, semantic red/yellow/green/blue for errors / warnings /
+  success / info. Values: `auto` (default; on if stdout is a TTY and
+  `NO_COLOR` is not set), `on` / `dark`, `light`, or `off`.
+- Cross-platform: Windows 11, Linux, and macOS. On Windows we flip
+  `ENABLE_VIRTUAL_TERMINAL_PROCESSING` via `SetConsoleMode` so escape codes
+  are interpreted natively without `colorama`. Honours the
+  [NO_COLOR](https://no-color.org/) and `FORCE_COLOR` conventions.
+
+### 1.2.4
+- REPL prompt is now `>` instead of `loom>`.
+- No more blank line under the user's input on the first agent step. Step 2+
+  still gets a leading newline so the LLM turn is separated from prior tool
+  output.
+
+### 1.2.3
+- REPL now prints a blank line after the model's text so the next prompt or
+  `[tool] ...` line isn't visually glued to the LLM output. Idempotent: works
+  whether the model's last token ends with a newline or not.
+
+### 1.2.2
+- `VAULT_TOKEN_PATH` / `vault.token_path` now tolerates a leading `v1/` (or
+  `/v1/`, case-insensitive) and leading slashes - Loom always prepends `v1/`
+  itself, so a doubled prefix would 404. Paste from `vault read v1/...` and
+  it just works.
 
 ### 1.2.1
 - Vertex provider: transparent one-shot retry on `401 AuthenticationError` /

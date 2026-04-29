@@ -82,6 +82,48 @@ def test_invalid_provider() -> None:
     assert any("Unknown provider" in e for e in errors)
 
 
+def test_default_max_tokens_matches_opus_4_6_cap() -> None:
+    """Loom's default max_tokens should match Claude Opus 4.6's hard cap."""
+    cfg = LoomConfig()
+    assert cfg.max_tokens == 128000
+
+
+def test_default_color_is_auto() -> None:
+    cfg = LoomConfig()
+    assert cfg.color == "auto"
+
+
+def test_loom_color_env_overrides_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_loom_env(monkeypatch)
+    toml = tmp_path / "loom.toml"
+    toml.write_text("[loom]\ncolor = 'on'\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LOOM_COLOR", "off")
+
+    cfg = load_config(toml_path=toml)
+    assert cfg.color == "off"
+
+
+def test_default_wrap_is_auto() -> None:
+    cfg = LoomConfig()
+    assert cfg.wrap == "auto"
+
+
+def test_loom_wrap_env_overrides_toml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_loom_env(monkeypatch)
+    toml = tmp_path / "loom.toml"
+    toml.write_text("[loom]\nwrap = '80'\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LOOM_WRAP", "off")
+
+    cfg = load_config(toml_path=toml)
+    assert cfg.wrap == "off"
+
+
 def test_project_toml_overrides_user_toml(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -17,6 +17,7 @@ from threading import Event
 from typing import Optional
 
 from .agent import Agent
+from .colors import COLOR
 from .config import (
     LoomConfig,
     REPO_ROOT,
@@ -47,21 +48,21 @@ def _apply_tls_settings(cfg: LoomConfig) -> None:
         except Exception:
             pass
     if global_off:
-        print(
+        print(COLOR.warning(
             "[!] TLS verification is DISABLED globally (loom.tls_verify=false). "
             "Traffic to Vault, Vertex, and OpenRouter is encrypted but server "
             "certificates are NOT being validated. Prefer setting tls_ca_bundle "
             "to a CA file instead."
-        )
+        ))
     elif vault_off:
-        print(
+        print(COLOR.warning(
             "[!] TLS verification is DISABLED for Vault only "
             "(vault.tls_verify=false). Vertex/OpenRouter still verify normally."
-        )
+        ))
     if cfg.tls_ca_bundle:
-        print(f"[*] Global TLS CA bundle: {cfg.tls_ca_bundle}")
+        print(COLOR.info(f"[*] Global TLS CA bundle: {cfg.tls_ca_bundle}"))
     if cfg.vault.tls_ca_bundle:
-        print(f"[*] Vault-specific TLS CA bundle: {cfg.vault.tls_ca_bundle}")
+        print(COLOR.info(f"[*] Vault-specific TLS CA bundle: {cfg.vault.tls_ca_bundle}"))
 
 
 BANNER = """
@@ -105,6 +106,7 @@ class LoomCLI:
             max_tokens=cfg.max_tokens,
             temperature=cfg.temperature,
             max_steps=cfg.max_agent_steps,
+            wrap=cfg.wrap,
         )
         self._messages: list[Message] = []
         self._cancel: Optional[Event] = None
@@ -115,16 +117,26 @@ class LoomCLI:
         skill_names = self._skills.discover()
         mcp_names = self._mcp.start_and_register(self._registry)
 
-        print(BANNER)
-        print(f"  cwd      : {Path.cwd()}")
-        print(f"  provider : {self._provider.name}")
-        print(f"  model    : {self._provider.model}")
-        print(f"  tools    : {len(self._registry.names())} ({', '.join(self._registry.names()[:8])}{'...' if len(self._registry.names()) > 8 else ''})")
-        print(f"  skills   : {len(skill_names)} {tuple(skill_names) if skill_names else ''}")
-        print(f"  mcp      : {len(mcp_names)} {tuple(mcp_names) if mcp_names else ''}")
+        print(COLOR.brand(BANNER))
+        for label, value in [
+            ("cwd     ", str(Path.cwd())),
+            ("provider", self._provider.name),
+            ("model   ", self._provider.model),
+        ]:
+            print(f"  {COLOR.dim(label + ' :')} {value}")
+        names = self._registry.names()
+        tools_summary = f"{len(names)} ({', '.join(names[:8])}{'...' if len(names) > 8 else ''})"
+        print(f"  {COLOR.dim('tools    :')} {tools_summary}")
+        skills_summary = f"{len(skill_names)} {tuple(skill_names) if skill_names else ''}".rstrip()
+        print(f"  {COLOR.dim('skills   :')} {skills_summary}")
+        mcp_summary = f"{len(mcp_names)} {tuple(mcp_names) if mcp_names else ''}".rstrip()
+        print(f"  {COLOR.dim('mcp      :')} {mcp_summary}")
         print()
-        print("Type a message, or /help for commands. Ctrl+C interrupts a")
-        print("running response; press Ctrl+C again at the prompt to exit.\n")
+        print(COLOR.dim(
+            "Type a message, or /help for commands. Ctrl+C interrupts a "
+            "running response; press Ctrl+C again at the prompt to exit."
+        ))
+        print()
 
         system_prompt = _build_system_prompt(self._cfg, self._skills, self._registry)
         self._messages = [Message(role="system", content=system_prompt)]
@@ -137,7 +149,12 @@ class LoomCLI:
     def loop(self) -> None:
         while True:
             try:
-                line = input("loom> ").rstrip()
+                # Print the colored prompt directly so input()'s readline
+                # doesn't have to count ANSI escape widths (cross-platform
+                # safe; works the same on Linux, macOS, and Windows 11).
+                sys.stdout.write(COLOR.brand("> "))
+                sys.stdout.flush()
+                line = input("").rstrip()
             except (EOFError, KeyboardInterrupt):
                 print()
                 return
@@ -178,7 +195,7 @@ class LoomCLI:
                 tc = f" [tool_calls={[c.name for c in m.tool_calls]}]" if m.tool_calls else ""
                 print(f"{i:>3} {m.role:<9} {head}{tc}")
         else:
-            print(f"unknown command: {cmd} (try /help)")
+            print(COLOR.error(f"unknown command: {cmd} (try /help)"))
         return False
 
     def _handle_user_turn(self, text: str) -> None:
@@ -198,7 +215,9 @@ class LoomCLI:
         try:
             self._agent.run(self._messages, cancel=cancel)
         except Exception as e:
-            print(f"\n[error] {type(e).__name__}: {e}\n")
+            print()
+            print(COLOR.error(f"[error] {type(e).__name__}: {e}"))
+            print()
             # Roll back the user turn so it can be retried.
             if self._messages and self._messages[-1].role == "user":
                 self._messages.pop()
@@ -258,8 +277,14 @@ _USER_TOML_TEMPLATE = """\
 
 [loom]
 provider = "openrouter"
-max_tokens = 4096
+# Claude Opus 4.6 supports up to 128k output tokens; max_tokens is a hard
+# cap, not a target, so setting it high is safe.
+max_tokens = 128000
 temperature = 0.4
+# Terminal colors: "auto" (default), "on" / "dark" / "light", or "off".
+color = "auto"
+# Word-wrap LLM output: "auto" (terminal width), "off", or a fixed integer.
+wrap = "auto"
 
 # --- TLS (apply to Vault, Vertex, and OpenRouter) ---
 # If you hit SSLError behind a corporate proxy, point this at its CA bundle:
@@ -373,13 +398,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.provider:
         cfg.provider = args.provider
 
+    COLOR.configure(cfg.color)
+
     errors = validate_for_provider(cfg)
     if errors:
-        print("Loom configuration errors:")
+        print(COLOR.error("Loom configuration errors:"))
         for e in errors:
-            print(f"  - {e}")
+            print(COLOR.error(f"  - {e}"))
         print()
-        print("Hint: run `loom init` to create ~/.loom/, then edit ~/.loom/.env.")
+        print(COLOR.dim("Hint: run `loom init` to create ~/.loom/, then edit ~/.loom/.env."))
         return 2
 
     _apply_tls_settings(cfg)

@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from threading import Event
 from typing import Optional
 
+from .colors import COLOR
 from .providers import (
     Done,
     Message,
@@ -33,6 +34,7 @@ from .providers import (
     ToolCallEvent,
 )
 from .tools.registry import ToolRegistry
+from .wrapping import StreamWrapper, detect_terminal_width, resolve_wrap_width
 
 
 @dataclass
@@ -51,6 +53,7 @@ class Agent:
         temperature: float,
         max_steps: int,
         out=sys.stdout,
+        wrap: str = "off",
     ) -> None:
         self._provider = provider
         self._registry = registry
@@ -58,6 +61,7 @@ class Agent:
         self._temperature = temperature
         self._max_steps = max_steps
         self._out = out
+        self._wrap_setting = wrap
 
     def _provider_tools(self) -> list[Tool]:
         return self._registry.provider_tools()
@@ -80,7 +84,21 @@ class Agent:
             tool_calls = []
             stop_reason = "end_turn"
 
-            self._print("\n")
+            # On step 2+ a leading newline separates this assistant turn from
+            # the previous tool output. On step 1 the user just hit Enter, so
+            # we skip it - otherwise we'd insert an awkward blank line right
+            # under their prompt.
+            if step > 1:
+                self._print("\n")
+
+            # Snapshot the terminal width per turn so window resizes between
+            # turns are honoured. Wrapping is bypassed (transparent
+            # pass-through) when disabled or below the min-width threshold.
+            wrap_width = resolve_wrap_width(
+                self._wrap_setting, terminal_width=detect_terminal_width()
+            )
+            wrapper = StreamWrapper(self._print, wrap_width)
+
             try:
                 for evt in self._provider.stream(
                     messages,
@@ -90,7 +108,7 @@ class Agent:
                     cancel=cancel,
                 ):
                     if isinstance(evt, TextDelta):
-                        self._print(evt.text)
+                        wrapper.feed(evt.text)
                         text_buf.append(evt.text)
                     elif isinstance(evt, ToolCallEvent):
                         tool_calls.append(evt.tool_call)
@@ -98,11 +116,25 @@ class Agent:
                         stop_reason = evt.stop_reason
             except KeyboardInterrupt:
                 stop_reason = "interrupted"
+            finally:
+                # Flush any buffered partial word so the model's last
+                # characters always reach the screen, even on interrupt.
+                wrapper.flush()
 
             if cancel is not None and cancel.is_set():
                 stop_reason = "interrupted"
 
-            self._print("\n")
+            # Ensure the LLM's text ends with exactly one newline, then add a
+            # blank line of separation so the next prompt / [tool] line / next
+            # turn isn't visually glued to the model's output. If the model
+            # emitted no text at all (tool-only turn), the leading "\n" at the
+            # top of this loop already gave us breathing room.
+            if text_buf:
+                if not "".join(text_buf).endswith("\n"):
+                    self._print("\n")
+                self._print("\n")
+            else:
+                self._print("\n")
 
             assistant = Message(
                 role="assistant",
@@ -112,7 +144,7 @@ class Agent:
             messages.append(assistant)
 
             if stop_reason == "interrupted":
-                self._print("[interrupted]\n")
+                self._print(COLOR.warning("[interrupted]") + "\n")
                 # Note in history so the model knows it was cut off.
                 if assistant.content is None:
                     assistant.content = "[interrupted by user]"
@@ -126,7 +158,12 @@ class Agent:
             # Execute every tool call, append results, loop.
             for call in tool_calls:
                 pretty = _pretty_args(call.arguments)
-                self._print(f"[tool] {call.name}({pretty})\n")
+                tool_line = (
+                    COLOR.tool("[tool] ")
+                    + COLOR.bold(call.name)
+                    + COLOR.dim(f"({pretty})")
+                )
+                self._print(tool_line + "\n")
                 if cancel is not None and cancel.is_set():
                     result = "[skipped: interrupted]"
                 else:
@@ -137,7 +174,7 @@ class Agent:
                         if cancel is not None:
                             cancel.set()
                 preview = result if len(result) <= 300 else result[:300] + "..."
-                self._print(f"  -> {preview}\n")
+                self._print(COLOR.dim(f"  -> {preview}") + "\n")
                 messages.append(
                     Message(
                         role="tool",
@@ -150,7 +187,7 @@ class Agent:
             if cancel is not None and cancel.is_set():
                 return AgentResult(stop_reason="interrupted", steps=step)
 
-        self._print(f"\n[max agent steps reached: {self._max_steps}]\n")
+        self._print("\n" + COLOR.warning(f"[max agent steps reached: {self._max_steps}]") + "\n")
         return AgentResult(stop_reason="max_steps", steps=self._max_steps)
 
 

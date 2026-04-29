@@ -149,6 +149,40 @@ def test_403_permission_denied_after_post_raises_helpful_error(monkeypatch: pyte
     assert "gcp/token/example" in msg
 
 
+@pytest.mark.parametrize(
+    "configured_path",
+    [
+        "gcp/token/example",
+        "/gcp/token/example",
+        "v1/gcp/token/example",
+        "/v1/gcp/token/example",
+        "V1/gcp/token/example",
+    ],
+)
+def test_token_path_strips_leading_v1_and_slashes(
+    monkeypatch: pytest.MonkeyPatch, configured_path: str
+) -> None:
+    """The configured token_path is normalised so a leading v1/ doesn't double up."""
+    cfg = VaultConfig(
+        url="https://vault.example",
+        namespace="myns",
+        role_id="r",
+        secret_id="s",
+        token_path=configured_path,
+    )
+    fake = _FakeSession()
+    client = VaultClient(cfg)
+    client._session = fake  # type: ignore[attr-defined]
+    fake.queue(
+        _FakeResp(200, {"auth": {"client_token": "t", "lease_duration": 3600}}),
+        _FakeResp(200, {"data": {"token": "tok", "token_ttl": 1800}}),
+    )
+    client.get_gcp_access_token()
+    secret_call = fake.calls[1]
+    assert secret_call[0] == "GET"
+    assert secret_call[1] == "https://vault.example/v1/gcp/token/example"
+
+
 def test_kv_v2_shape_supported(monkeypatch: pytest.MonkeyPatch) -> None:
     client, fake = _make_client(monkeypatch)
     fake.queue(

@@ -310,6 +310,69 @@ def test_agent_respects_max_steps() -> None:
     assert result.steps == 3
 
 
+@pytest.mark.parametrize(
+    "model_text,expected_tail",
+    [
+        ("hello world", "hello world\n\n"),  # no trailing newline -> add two
+        ("hello world\n", "hello world\n\n"),  # already has one -> add one more
+        ("hello world\n\n", "hello world\n\n\n"),  # idempotent in spirit; one extra always
+    ],
+)
+def test_agent_emits_blank_line_after_llm_text(model_text: str, expected_tail: str) -> None:
+    """The LLM's text should always be followed by at least one blank line."""
+    provider = _ScriptedProvider(
+        [
+            [TextDelta(text=model_text), Done(stop_reason="end_turn")],
+        ]
+    )
+    registry = _registry_with(lambda args: "")
+    out = io.StringIO()
+    agent = Agent(provider, registry, max_tokens=10, temperature=0.0, max_steps=2, out=out)
+    agent.run([Message(role="user", content="hi")])
+    text = out.getvalue()
+    assert text.endswith(expected_tail), repr(text)
+
+
+def test_agent_no_leading_newline_on_first_step() -> None:
+    """Step 1 should not emit a leading newline (would print a blank line right
+    under the user's prompt). Step 2+ still does so the LLM turn is separated
+    from prior tool output."""
+    provider = _ScriptedProvider(
+        [
+            [TextDelta(text="step1"), Done(stop_reason="end_turn")],
+        ]
+    )
+    registry = _registry_with(lambda args: "")
+    out = io.StringIO()
+    agent = Agent(provider, registry, max_tokens=10, temperature=0.0, max_steps=2, out=out)
+    agent.run([Message(role="user", content="hi")])
+    text = out.getvalue()
+    assert not text.startswith("\n"), repr(text)
+    assert text.startswith("step1"), repr(text)
+
+
+def test_agent_emits_leading_newline_on_step_two() -> None:
+    """Step 2 (after a tool call) should emit a leading newline so the next
+    LLM turn isn't visually glued to the tool output."""
+    provider = _ScriptedProvider(
+        [
+            [
+                ToolCallEvent(tool_call=ToolCall(id="c1", name="t", arguments={})),
+                Done(stop_reason="tool_use"),
+            ],
+            [TextDelta(text="after-tool"), Done(stop_reason="end_turn")],
+        ]
+    )
+    registry = _registry_with(lambda args: "ok")
+    out = io.StringIO()
+    agent = Agent(provider, registry, max_tokens=10, temperature=0.0, max_steps=3, out=out)
+    agent.run([Message(role="user", content="go")])
+    text = out.getvalue()
+    # After the "  -> ok\n" line of the first step, step 2 should print a
+    # leading "\n" before the LLM text starts.
+    assert "\n\nafter-tool" in text, repr(text)
+
+
 def test_agent_interrupt_keeps_partial() -> None:
     cancel = Event()
 

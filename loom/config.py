@@ -69,12 +69,24 @@ class MCPServerConfig:
 @dataclass
 class LoomConfig:
     provider: str = "vertex"
-    max_tokens: int = 4096
+    # Claude Opus 4.6 supports up to 128k output tokens. Setting this high is
+    # safe: max_tokens is a HARD CAP, not a target - the model stops when it's
+    # done, you only pay for what it actually emits.
+    max_tokens: int = 128000
     temperature: float = 0.4
     max_agent_steps: int = 30
     # Project-local skills directory (relative to CWD). User-global skills
     # always come from ~/.loom/skills in addition to this.
     skills_dir: str = ".loom/skills"
+    # Terminal color output. "auto" enables colors when stdout is a TTY and
+    # NO_COLOR is not set. Other values: "on"/"true"/"dark", "light",
+    # "off"/"false"/"none". See loom/colors.py for the palette.
+    color: str = "auto"
+    # Word-wrap LLM output to the terminal width. "auto" (default) uses the
+    # current terminal columns; "off" disables wrapping; a positive integer
+    # forces a fixed column count (useful for piping to a file). Code blocks
+    # (``` ... ```) are never wrapped.
+    wrap: str = "auto"
     # TLS settings applied to every outbound HTTP call (Vault, Vertex,
     # OpenRouter). Set tls_ca_bundle to your corporate CA file path - that
     # solves SSLError without compromising verification. tls_verify=false is
@@ -207,6 +219,8 @@ def load_config(
 
     # Env overrides
     cfg.provider = os.getenv("LOOM_PROVIDER", cfg.provider).lower()
+    cfg.color = os.getenv("LOOM_COLOR", cfg.color)
+    cfg.wrap = os.getenv("LOOM_WRAP", cfg.wrap)
 
     tls_verify_env = os.getenv("LOOM_TLS_VERIFY")
     if tls_verify_env is not None:

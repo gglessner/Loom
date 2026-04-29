@@ -92,6 +92,11 @@ class VaultClient:
     def _read_secret(self, path: str) -> dict[str, Any]:
         self._ensure_session()
         path = path.strip("/")
+        # Tolerate users who paste a path that already starts with "v1/" in
+        # their config - we always prepend "v1/" ourselves, so doubling it
+        # would 404. Match case-insensitively just in case.
+        if path.lower().startswith("v1/"):
+            path = path[3:]
         url = f"{self._cfg.url.rstrip('/')}/v1/{path}"
 
         def do_get() -> "requests.Response":

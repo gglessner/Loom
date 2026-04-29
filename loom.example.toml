@@ -4,11 +4,28 @@
 [loom]
 # "vertex" for Claude on Vertex AI, "openrouter" for OpenRouter.ai.
 provider = "vertex"
-max_tokens = 4096
+# Claude Opus 4.6 supports up to 128,000 output tokens. This is a HARD CAP,
+# not a target - the model stops when it's done, you only pay for what it
+# actually emits. 128000 is a sensible default for a long-running coder.
+max_tokens = 128000
 temperature = 0.4
 max_agent_steps = 30
 # Where to look for *.md skill files (relative to your cwd).
 skills_dir = ".loom/skills"
+# Terminal colors. Mimics Claude Code's accent palette.
+# Values: "auto" (default; on if stdout is a TTY and NO_COLOR is not set),
+#         "on" / "true" / "dark"  - force dark theme,
+#         "light"                 - force light theme,
+#         "off" / "false" / "none" - never colorize.
+# You can also set LOOM_COLOR in the environment.
+color = "auto"
+# Word-wrap streaming LLM output to fit the terminal. Code fences (```)
+# are preserved verbatim. Values:
+#   "auto"  (default; uses the current terminal columns at each turn)
+#   "off"   no wrapping (legacy behaviour)
+#   <int>   fixed column count, e.g. 100
+# Override at runtime with LOOM_WRAP=...
+wrap = "auto"
 
 # --- TLS settings (apply to Vault, Vertex, and OpenRouter) ---
 # If your network has TLS interception (corporate proxy), point this at
